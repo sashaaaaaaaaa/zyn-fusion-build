@@ -21,6 +21,3 @@ test.rb
 tmp/**
 build/**
 src/**
-!src/mruby-zest-build/zest.c
-!src/mruby-zest-build/src/mruby-widget-lib/src/api.c
-!src/mruby-zest-build/src/osc-bridge/src/bridge.c
