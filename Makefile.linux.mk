@@ -69,7 +69,7 @@ ifneq ($(PATCHES),)
 	# Apply custom patches
 	for p in $(PATCHES); do \
 		echo "Applying $$p..."; \
-		cd $(ZEST_PATH) && patch -p1 < $$p; \
+		cd $(ZEST_PATH) && patch -p1 -N -t < $$p; \
 	done
 endif
 
@@ -81,7 +81,7 @@ ifneq ($(PATCHES),)
 	# Revert patches to keep source tree clean
 	for p in $(PATCHES); do \
 		echo "Reverting $$p..."; \
-		cd $(ZEST_PATH) && patch -p1 -R < $$p; \
+		cd $(ZEST_PATH) && patch -p1 -R -N -t < $$p; \
 	done
 endif
 
