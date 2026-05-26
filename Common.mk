@@ -131,11 +131,11 @@ endif
 ifneq ($(ZEST_COMMIT), DIRTY)
 	cd $(ZEST_PATH); \
 	git fetch; \
-	git checkout $(ZEST_COMMIT); \
-	git submodule update --init
+	git checkout -f $(ZEST_COMMIT); \
+	git submodule update --init --force
 else
 	cd $(ZEST_PATH); \
-	git submodule update --init
+	git submodule update --init --force
 endif
 
 
