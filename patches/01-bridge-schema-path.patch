@@ -1,0 +1,13 @@
+diff --git a/src/osc-bridge/src/bridge.c b/src/osc-bridge/src/bridge.c
+index 8d917a6..183faef 100644
+--- a/src/osc-bridge/src/bridge.c
++++ b/src/osc-bridge/src/bridge.c
+@@ -429,7 +429,7 @@ schema_t br_get_schema(bridge_t *br, uri_t uri)
+     schema_t sch;
+ 
+     //printf("[debug] loading json file\n");
+-    FILE *f = fopen("schema/test.json", "r");
++    FILE *f = fopen("/opt/zyn-fusion/schema/test.json", "r");
+     if(!f && br->search_path) {
+         char tmp[256];
+         snprintf(tmp, sizeof(tmp), "%s%s", br->search_path, "schema/test.json");

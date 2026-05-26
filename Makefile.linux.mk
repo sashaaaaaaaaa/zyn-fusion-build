@@ -3,6 +3,14 @@ include Install-deps.mk
 
 OS		:= linux
 
+# Detect architecture (SlackBuilds.org convention)
+ARCH := $(shell uname -m)
+ifeq ($(ARCH), x86_64)
+  LIBDIRSUFFIX := 64
+else
+  LIBDIRSUFFIX :=
+endif
+
 #
 ############################ ZynAddSubFX Rules ############################
 #
@@ -45,7 +53,10 @@ setup_zest: fetch_zest revoke_mruby_patches
 #
 get_zest: fetch_zest revoke_mruby_patches setup_zest
 
-build_zest:
+# Patches for /opt/zyn-fusion deployment (applied after git checkout, reverted after pack)
+PATCHES := $(wildcard $(TOP)/patches/*.patch)
+
+build_zest: get_zest
 	$(info ========== Building Zest in $(MODE) mode ==========)
 
 	$(MAKE) -C $(ZEST_PATH) clean
@@ -54,9 +65,25 @@ build_zest:
 	rm -f package/qml/*.qml; \
 	ruby rebuild-fcache.rb
 
+ifneq ($(PATCHES),)
+	# Apply custom patches
+	for p in $(PATCHES); do \
+		echo "Applying $$p..."; \
+		cd $(ZEST_PATH) && patch -p1 < $$p; \
+	done
+endif
+
 	VERSION=$(VER) BUILD_MODE=$(MODE) \
 	$(MAKE) -C $(ZEST_PATH)
 	$(MAKE) -C $(ZEST_PATH) pack
+
+ifneq ($(PATCHES),)
+	# Revert patches to keep source tree clean
+	for p in $(PATCHES); do \
+		echo "Reverting $$p..."; \
+		cd $(ZEST_PATH) && patch -p1 -R < $$p; \
+	done
+endif
 
 	cd $(ZEST_PATH); \
 	rm -f package/qml/*.qml
@@ -68,11 +95,11 @@ build_zest:
 TARGET_TAR_FILE	:= $(BUILD_PATH)/zyn-fusion-linux-64bit-$(VER)-$(MODE).tar.bz2
 ZYN_FUSION_OUT	:= $(BUILD_PATH)/zyn-fusion-linux-64bit-$(VER)-$(MODE)
 
-preinstall_zynaddsubfx:
+preinstall_zynaddsubfx: build_zynaddsubfx
 	rm -rf $(ZYNADDSUBFX_INSTALL_DIR)
 	$(MAKE) DESTDIR="$(ZYNADDSUBFX_INSTALL_DIR)" -C $(ZYNADDSUBFX_BUILD_DIR) install
 
-copy_zest_files: preinstall_zynaddsubfx
+copy_zest_files: preinstall_zynaddsubfx build_zest
 	rm -rf $(ZYN_FUSION_OUT)
 	mkdir  $(ZYN_FUSION_OUT)
 
@@ -95,7 +122,7 @@ copy_zest_files: preinstall_zynaddsubfx
 	cp	  $(ZEST_PATH)/package-README.txt $(ZYN_FUSION_OUT)/README.txt
 	cp	  $(ZYNADDSUBFX_PATH)/COPYING $(ZYN_FUSION_OUT)/COPYING.zynaddsubfx
 
-package: preinstall_zynaddsubfx copy_zest_files
+package: zynaddsubfx zest copy_zest_files
 	rm -rf $(TARGET_TAR_FILE)
 
 # Use `basename` to avoid packing up absolute path
@@ -103,3 +130,60 @@ package: preinstall_zynaddsubfx copy_zest_files
 	tar acf $(TARGET_TAR_FILE) ./$(shell basename $(ZYN_FUSION_OUT))
 	ls
 	@echo "Finished! Made Package in $(MODE) Mode"
+
+SLACK_PKG_DIR := $(BUILD_PATH)/slackware-pkg
+SLACK_PKG_NAME := zyn-fusion-$(VER)-$(ARCH)-1.tgz
+
+slackware-pkg: zynaddsubfx zest
+	$(info ========== Building Slackware Package ==========)
+	rm -rf $(SLACK_PKG_DIR)
+	mkdir -p $(SLACK_PKG_DIR)
+
+	# 1. cmake DESTDIR install (plugins + banks + lib + binary + data)
+	$(MAKE) DESTDIR="$(SLACK_PKG_DIR)" -C $(ZYNADDSUBFX_BUILD_DIR) install
+
+	# 2. Move plugin lib -> lib64 on x86_64 (SBo convention)
+ifneq ($(LIBDIRSUFFIX),)
+	test -d $(SLACK_PKG_DIR)/usr/lib && mv $(SLACK_PKG_DIR)/usr/lib $(SLACK_PKG_DIR)/usr/lib$(LIBDIRSUFFIX) || true
+endif
+
+	# 3. Create /opt/zyn-fusion/ (upstream layout — no patches needed)
+	mkdir -p $(SLACK_PKG_DIR)/opt/zyn-fusion/qml
+	mkdir -p $(SLACK_PKG_DIR)/opt/zyn-fusion/font
+	mkdir -p $(SLACK_PKG_DIR)/opt/zyn-fusion/schema
+
+	cp $(ZEST_PATH)/package/zest          $(SLACK_PKG_DIR)/opt/zyn-fusion/zyn-fusion
+	cp $(ZEST_PATH)/package/libzest.so    $(SLACK_PKG_DIR)/opt/zyn-fusion/
+	cp $(ZEST_PATH)/src/mruby-zest/qml/*.qml     $(SLACK_PKG_DIR)/opt/zyn-fusion/qml/
+	cp $(ZEST_PATH)/src/mruby-zest/example/*.qml $(SLACK_PKG_DIR)/opt/zyn-fusion/qml/
+	cp $(ZEST_PATH)/deps/nanovg/example/*.ttf    $(SLACK_PKG_DIR)/opt/zyn-fusion/font/
+	cp $(ZEST_PATH)/src/osc-bridge/schema/test.json $(SLACK_PKG_DIR)/opt/zyn-fusion/schema/
+
+	# 4. Symlink for PATH access
+	mkdir -p $(SLACK_PKG_DIR)/usr/bin
+	ln -s /opt/zyn-fusion/zyn-fusion $(SLACK_PKG_DIR)/usr/bin/zyn-fusion
+
+	# 5. Doc dir (SBo: usr/doc/<pkg>-<ver>)
+	mkdir -p $(SLACK_PKG_DIR)/usr/doc/zyn-fusion-$(VER)
+	test -d $(SLACK_PKG_DIR)/usr/share/doc/zynaddsubfx && \
+	  cp -a $(SLACK_PKG_DIR)/usr/share/doc/zynaddsubfx/* \
+	    $(SLACK_PKG_DIR)/usr/doc/zyn-fusion-$(VER)/ || true
+	rm -rf $(SLACK_PKG_DIR)/usr/share/doc
+
+	# 6. Install metadata
+	mkdir -p $(SLACK_PKG_DIR)/install
+	cp $(TOP)/slackware/slack-desc  $(SLACK_PKG_DIR)/install/
+	cp $(TOP)/slackware/doinst.sh   $(SLACK_PKG_DIR)/install/
+
+	# 7. Fix ownership (requires root; no-op for non-root builds)
+	cd $(SLACK_PKG_DIR) && chown -R root:root . || true
+
+	# 8. Strip ELF binaries and shared libs
+	find $(SLACK_PKG_DIR)/opt -type f -exec strip --strip-unneeded {} \; 2>/dev/null || true
+	find $(SLACK_PKG_DIR)/usr/bin -type f -exec strip --strip-unneeded {} \; 2>/dev/null || true
+	find $(SLACK_PKG_DIR)/usr/lib$(LIBDIRSUFFIX) -type f -name "*.so*" -exec strip --strip-unneeded {} \; 2>/dev/null || true
+
+	# 9. Package
+	cd $(SLACK_PKG_DIR) && \
+	/sbin/makepkg -l y -c n $(BUILD_PATH)/$(SLACK_PKG_NAME)
+	@echo "Finished! Slackware Package: $(BUILD_PATH)/$(SLACK_PKG_NAME)"
